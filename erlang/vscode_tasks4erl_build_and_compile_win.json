@@ -1,0 +1,126 @@
+{
+    // See https://go.microsoft.com/fwlink/?LinkId=733558
+    // for the documentation about the tasks.json format
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Erlang build",
+            "type": "shell",
+            "windows": {
+                "command": "erl",
+                "args": [
+                    "-noshell",
+                    "-s", "make", "all",
+                    "-s","init", "stop"
+                ],
+                "options": {
+                    "env": {
+                        "path": "C:/Program Files/erl9.0/bin/"
+                    }
+                }
+            },
+            "problemMatcher": [
+                "$erlang"
+            ]
+        },
+        {
+            "label": "Erlang simple compile",
+            "type": "shell",
+            "windows": {
+                "command": "erlc -I ${workspaceRoot}\\include -o ${workspaceRoot}\\ebin ${file}",
+                "options": {
+                    "env": {
+                        "path": "C:/Program Files/erl9.0/bin/"
+                    }
+                }
+            },
+            "problemMatcher": [
+                "$erlang"
+            ]
+        },
+        {
+            "label": "Run Game",
+            "type":"shell",
+            "command": ["erl"],
+            // -boot start_sasl -pa ../ebin -config gsrv -s gsrv start -s reloader start -extra 192.168.5.184 9000 10
+            "args": [
+                // "${workspaceRoot}\\script\\gs10.bat"
+                "-pa", "${workspaceRoot}\\ebin",
+                "-P","1024000",
+                "-K","true",
+                "-smp","true",
+                "-name","yhtz_kf10@192.168.5.184",
+                "-hidden",
+                "-setcookie","yhtz_kf_10",
+                "-boot","start_sasl",
+                "-config","gsrv",
+                "-s","gsrv","start",
+                "-extra","192.168.5.184","16000","10"
+            ],
+            "windows": {
+                "options": {
+                    "env": {
+                        "path": "C:/Program Files/erl9.0/bin/"
+                    },
+                    "cwd": "${workspaceRoot}/config",
+                }
+            }
+        },
+        {
+            "label": "Run Center",
+            "type":"shell",
+            "command": ["erl"],
+            // -boot start_sasl -pa ../ebin -config gsrv -s gsrv start -s reloader start -extra 192.168.5.184 9000 10
+            "args": [
+                // "${workspaceRoot}\\script\\gs10.bat"
+                "-pa", "${workspaceRoot}\\ebin",
+                "-P","1024000",
+                "-K","true",
+                "-smp","true",
+                "-name","yhtz_kf_center@192.168.5.184",
+                "-hidden",
+                "-setcookie","yhtz_kf_center",
+                "-boot","start_sasl",
+                "-config","cls",
+                "-s","gsrv","start",
+                "-extra","192.168.5.184","16009","0"
+            ],
+            "windows": {
+                "options": {
+                    "env": {
+                        "path": "C:/Program Files/erl9.0/bin/"
+                    },
+                    "cwd": "${workspaceRoot}/config",
+                }
+            }
+        },
+        {
+            "label": "Erlang Run",
+            "type": "shell",
+            "windows": {
+                "command": "erl -pa ${workspaceRoot}\\ebin",
+                "options": {
+                    "env": {
+                        "path": "C:/Program Files/erl9.0/bin/"
+                    }
+                }
+            },
+            "problemMatcher": [
+                "$erlang"
+            ]
+        },
+        {
+            "label": "Protocol Builder",
+            "type": "shell",
+            "windows": {
+                "command": "ProtoBuilder.bat",
+                "options": {
+                    "cwd": "${workspaceRoot}/../doc/proto_auto/",
+                }
+            },
+            "problemMatcher": [
+                "$erlang"
+            ]
+        }
+    ]
+}
