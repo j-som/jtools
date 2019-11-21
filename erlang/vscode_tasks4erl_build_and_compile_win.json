@@ -42,9 +42,7 @@
             "label": "Run Game",
             "type":"shell",
             "command": ["erl"],
-            // -boot start_sasl -pa ../ebin -config gsrv -s gsrv start -s reloader start -extra 192.168.5.184 9000 10
             "args": [
-                // "${workspaceRoot}\\script\\gs10.bat"
                 "-pa", "${workspaceRoot}\\ebin",
                 "-P","1024000",
                 "-K","true",
@@ -70,9 +68,7 @@
             "label": "Run Center",
             "type":"shell",
             "command": ["erl"],
-            // -boot start_sasl -pa ../ebin -config gsrv -s gsrv start -s reloader start -extra 192.168.5.184 9000 10
             "args": [
-                // "${workspaceRoot}\\script\\gs10.bat"
                 "-pa", "${workspaceRoot}\\ebin",
                 "-P","1024000",
                 "-K","true",
