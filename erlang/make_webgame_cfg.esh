@@ -1,0 +1,249 @@
+#! /usr/bin/env escript
+%%% -*- coding: utf-8 -*-
+
+
+-define(DBG(),io:format("[~s]~n",[lists:concat([?FILE,":",?LINE])])).
+-define(DBG(String,Param), io:format("[~s] ~s~n",[lists:concat([?FILE,":",?LINE]), io_lib:format(String, Param)])).
+
+%% 项目路径
+-define(PROJECT_ROOT, "d:/work/c1/server/project/trunk").
+%% 输出代码路径
+-define(OUTPUT_SRC_PATH, filename:join([?PROJECT_ROOT, "src/webgame/cfg"])).
+
+-define(INCLUDE_PATH, filename:join([?PROJECT_ROOT, "include"])).
+
+-define(INCLUDE_FILE_NAME, "webgame_config.hrl").
+
+%% xlsx文件路径
+-define(XLSX_PATH, "d:/work/c1/client/project/Plan/excel").
+
+-record(cfg_rec, {
+    name,
+    fields,
+    values = []
+}).
+
+main(_) ->
+    code:add_path(filename:join([?PROJECT_ROOT, "deps/ebin"])),
+    code:add_path(filename:join([?PROJECT_ROOT, "ebin"])),
+    make_webgame_cfg().
+
+
+make_webgame_cfg() ->
+    try
+        FileNames = filelib:wildcard("t_*.xlsx", ?XLSX_PATH),
+        Count = lists:foldl(
+            fun (FileName, FileCountAcc) ->
+                Parent = self(),
+                FullFileName = filename:join([?XLSX_PATH, FileName]),
+                % ?DBG("create_cfg_file ~s ~p", [FileName, filelib:is_file(FullFileName)]),
+                case filelib:is_file(FullFileName) of 
+                    true ->
+                        spawn(fun() -> do_create_cfg_file(FullFileName, Parent) end),
+                        FileCountAcc + 1;
+                    false ->
+                        FileCountAcc
+                end
+            end,
+        0, FileNames),
+        loop(Count, 0, 0, [])
+    catch Expection:Reason ->
+        ?DBG("make webgame_config error: ~p:~p~n~p", [Expection, Reason, erlang:get_stacktrace()])
+    end.
+
+loop(TotoCount, TotoCount, SuccessCount, AllRecord) -> 
+    if 
+        SuccessCount == TotoCount ->
+            IncludeFileName = filename:join([?INCLUDE_PATH, ?INCLUDE_FILE_NAME]),
+            %% os:cmd("rm -f " ++ IncludeFileName"),
+            %% os:cmd("mkdir -p " ++ IncludeFileName"),
+            file:delete(IncludeFileName),
+            DefHead = string:uppercase(get_base_name(?INCLUDE_FILE_NAME)),
+            RecDefinitions = [io_lib:format("-record(~s, {~s}).~n", [RecName, string:join([K || [_|_] = K <- Fields], ", ")]) || #cfg_rec{name = RecName, fields = Fields} <- AllRecord],
+            file:write_file(IncludeFileName, lists:flatten([
+                [
+                    io_lib:format("-ifndef(~s).\n", [DefHead]),
+                    io_lib:format("-define(~s, true).\n", [DefHead])
+                ],
+                RecDefinitions,
+                "-endif.\n"
+            ])),
+            ok;
+        true ->
+            ok
+    end;
+loop(TotoCount, Count, SuccessCount, RecordAcc) ->
+    receive
+        {create_finish, RecordInfo} ->
+            loop(TotoCount, Count + 1, SuccessCount + 1, content_append(RecordAcc, RecordInfo));
+        {create_error, _} ->
+            loop(TotoCount, Count + 1, SuccessCount, RecordAcc)
+    after 
+        600000 ->
+            timeout
+    end.
+
+do_create_cfg_file(FileName, Parent) ->
+    % ?DBG("do_create_cfg_file ~p", [FileName]),
+    RowHandler = fun
+        (SheetName, [1|Row], Context) -> %% 第一行为字段定义
+            RecName = make_record_name(SheetName),
+            RawFields = parse_fields(Row, []),
+            Fields = webgame_cfg:filter_server_fields(get_base_name(FileName), SheetName, RawFields),
+            Cfg = #cfg_rec{name = RecName, fields = Fields},
+            {next_row, [Cfg|Context]};
+        (_SheetName, [_, []|_], Context) -> %% 过滤空行 该行第一列没数据就丢弃
+            {next_row, Context};
+        (_SheetName, [_|Row], [Cfg|OKL]) ->
+            Cfg1 = collect_values(Row, Cfg),
+            {next_row, [Cfg1|OKL]};
+        (_, _, Context) ->
+            {next_row, Context}
+    end,
+
+    CfgRecL = xlsx_reader:read(FileName, [], RowHandler),
+    try 
+        ok = make_cfg_file(FileName, CfgRecL),
+        Parent ! {create_finish, [CfgRec#cfg_rec{values = []} || CfgRec <- CfgRecL]} %% 内容在生成头文件的时候不需要了
+    catch 
+        Expection:Reason ->
+            ?DBG("make webgame_config error: ~p~n ~p:~p~n~p", [FileName, Expection, Reason, erlang:get_stacktrace()]),
+            Parent ! {create_error, []}
+    end.
+
+get_base_name(FileName) ->
+    filename:basename(FileName, filename:extension(FileName)).
+
+make_cfg_file(FileName, CfgRecL) ->
+    FileBaseName = get_base_name(FileName),
+    ModName = io_lib:format("webgame_cfg_~s", [make_mod_name(FileBaseName)]),
+    FullFileName = filename:join([?OUTPUT_SRC_PATH, ModName ++ ".erl"]),
+    Head = io_lib:format("-module(~s).~n~n", [ModName]),
+    Include = io_lib:format("-include(\"~s\").~n~n", [?INCLUDE_FILE_NAME]),
+    F = fun(CfgRec, AccContent) ->
+
+        #cfg_rec{name = CfgName, fields = Fields, values = ValuesList0} = CfgRec,
+        case check_value_duplicate(ValuesList0) of 
+            [] -> ok;
+            DL -> ?DBG("warning: ~s/~s has duplicate ids = ~p", [FileBaseName, CfgName, DL])
+        end,
+        ValuesList = lists:reverse(ValuesList0),
+        WithGetsLines = lists:foldl(
+            fun(Row, Acc) ->
+                KVL = lists:zip(Fields, Row),
+                [Id|_] = Row,
+                WithFuncStart = content_append(Acc, [io_lib:format("get_~s(~s) ->~n", [CfgName, value_to_text(Id)])]),
+                WithFuncBody = content_append(WithFuncStart, make_record_text(CfgName, KVL)),
+                WithFuncEnd = content_append(WithFuncBody, ["\n"]),
+                WithFuncEnd
+            end,
+        AccContent, ValuesList),
+        NoMachLine = [io_lib:format("get_~s(_) -> undefined.~n~n", [CfgName])],
+        %% 获取所有id
+        AllIds = [value_to_text(Id) || [Id|_] <- ValuesList],
+        AllDefinition = io_lib:format("list_~s() -> ~n\t[~s].~n", [CfgName, string:join(AllIds, ",")]),
+        content_append(WithGetsLines, [NoMachLine, AllDefinition])
+    end,
+    BodyL = lists:foldl(F, [], CfgRecL),
+    Export = io_lib:format("-export([~n    ~s ~n]).~n~n", [string:join([io_lib:format("get_~s/1, list_~s/0", [CfgName, CfgName]) || #cfg_rec{name = CfgName} <- CfgRecL], ",\n")]),
+    FileBytes = [Head, Include, Export|lists:reverse(BodyL)],
+    file:write_file(FullFileName, FileBytes).
+
+content_append(Acc, []) -> Acc;
+content_append(Acc, [H|T]) -> content_append([H|Acc], T).
+
+make_record_text(CfgName, KVL) ->
+    [
+        io_lib:format("    #~s{", [CfgName]),
+        string:join([io_lib:format("~s = ~s", [K, value_to_text(V)]) || {K, V} <- KVL, K /= []], ","),
+        "};\n"
+    ].
+
+make_record_name("t_" ++ Name) ->
+    Name;
+make_record_name(Name) -> Name.
+
+make_mod_name(Name) ->
+    make_record_name(Name).
+
+parse_fields([[_|_] = H|Row], Acc) -> parse_fields(Row, [H|Acc]);
+parse_fields(_, Acc) -> lists:reverse(Acc). %% 遇到没有内容的单元格则中断
+
+collect_values(Row, Cfg) ->
+    #cfg_rec{name = Name, values = VLList, fields = Fields} = Cfg,
+    CutVL = lists:sublist(Row, length(Fields)),
+    KVL = lists:zip(Fields, CutVL),
+    VL = [parse_value(V, Name, K) || {K, V} <- KVL],
+    Cfg#cfg_rec{values = [VL|VLList]}.
+
+
+parse_value_without_type(V) ->
+    case parse_value(V, [int, float, list]) of 
+        {ok, {_, V1}} ->
+            V1;
+        _ ->
+            V
+    end.
+parse_value(V, _Name, _K) -> 
+    case parse_value(V, [int, float, list]) of 
+        {ok, VWithType} ->
+            VWithType;
+        _ ->
+            {b, V}
+    end.
+
+parse_value(V, [int|T]) ->
+    case string:to_integer(V) of 
+        {IV, []} ->
+            {ok, {p, IV}};
+        _ ->
+            parse_value(V, T)
+    end;
+parse_value(V, [float|T]) ->
+    case string:to_float(V) of 
+        {FV, []} ->
+            {ok, {p, FV}};
+        _ ->
+            parse_value(V, T)
+    end;
+
+parse_value(V, [list|T]) ->
+    case string:tokens(V, "#") of 
+        [_, _|_] = Tokens ->
+            L = [list_item(Token) || Token <- Tokens],
+            {ok, {o, L}};
+        _ ->
+            parse_value(V, T)
+    end;
+parse_value(_V, []) -> undefined.
+
+
+list_item(Token) ->
+    case string:tokens(Token, ",") of 
+        [_, _|_] = L ->
+            list_to_tuple([parse_value_without_type(V) || V <- L]);
+        _ ->
+            Token
+    end.
+
+value_to_text([]) -> "undefined";
+value_to_text({_, []}) -> "undefined";
+value_to_text({s, V}) -> io_lib:format("\"~s\"", [unicode:characters_to_binary(V)]);
+value_to_text({p, V}) -> io_lib:format("~p", [V]);
+value_to_text({b, V}) -> io_lib:format("<<\"~s\"/utf8>>", [unicode:characters_to_binary(V)]);
+value_to_text({o, V}) -> lists:flatten(io_lib:format("~p", [V]));
+value_to_text(V) -> V.
+
+check_value_duplicate(L) ->
+    check_value_duplicate(L, #{}, []).
+
+check_value_duplicate([], _, Acc) -> Acc;
+
+check_value_duplicate([[Id|_]|T], M, Acc) -> 
+    case maps:is_key(Id, M) of 
+        false ->
+            check_value_duplicate(T, M#{Id => 1}, Acc);
+        _ ->
+            check_value_duplicate(T, M, [Id|Acc])
+    end;
+check_value_duplicate([_|T], M, Acc) -> check_value_duplicate(T, M, Acc).

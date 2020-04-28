@@ -1,0 +1,16 @@
+% -*- mode: erlang -*-
+% 某些代码需要首先编译(如otp behaviour)
+{[	
+    "deps/e_excel/*"
+ ], 
+ [	
+	{i, "."},
+  	{outdir, "deps/ebin"},
+	{inline_size, 30},
+	report,
+	nowarn_export_all,
+	warnings_as_errors,
+	nowarn_export_all,
+	verbose
+ ]
+}.
